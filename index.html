@@ -70,6 +70,8 @@
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
   .field{margin-bottom:14px}
   .privacy{font-size:12.5px;color:var(--soft);line-height:1.6;margin-top:14px;text-align:center}
+  .stylermsg{min-height:20px;margin-top:12px;text-align:center;font-size:13.5px;
+    line-height:1.5;color:var(--accent);font-weight:500}
 
   /* ===== the reading ===== */
   .paper{display:none;max-width:172mm;margin:0 auto;padding:22px 16px 70px;
@@ -231,6 +233,7 @@
       <textarea id="src" placeholder="Paste the first message here, then the second underneath it, and so on..."></textarea>
     </div>
     <button id="go" type="button">Make it beautiful</button>
+    <p class="stylermsg" id="stylermsg" aria-live="polite"></p>
     <p class="privacy">Nothing you paste leaves your device. This page has no server: the
     styling happens in your own browser, and closing the tab forgets all of it.<br>
     When you print, switch on <b>Background graphics</b> so the colour comes out.</p>
@@ -291,7 +294,7 @@
       : 'ChatGPT is opening. If the box looks empty, just paste: it is already copied. Come back here when your reading is done.');
   });
 
-  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function inline(s){
     return esc(s)
       .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
@@ -319,6 +322,7 @@
     while(i < lines.length){
       var raw = lines[i], line = raw.trim();
       if(!line){ i++; continue; }
+      if(/^([-*_])\1{2,}$/.test(line.replace(/\s/g,''))){ i++; continue; }
       var m;
 
       if((m = line.match(CHAP))){
@@ -418,7 +422,7 @@
           }).join('')+'</div>');
           continue;
         }
-        out.push('<p>'+inline(cd[0][2])+'</p>'); continue;
+        out.push('<p>'+inline(cd[0][1])+'</p>'); continue;
       }
       if((m = line.match(SPEC)) && line.length < 90 && !line.match(/[.!?]$/)){
         out.push('<div class="spectrum"><s>'+inline(m[1])+'</s><i>&#8594;</i><s class="gift">'+
@@ -447,8 +451,20 @@
   }
 
   document.getElementById('go').addEventListener('click', function(){
-    var txt = document.getElementById('src').value.trim();
-    if(!txt){ document.getElementById('src').focus(); return; }
+    var ta = document.getElementById('src');
+    var txt = ta.value.trim();
+    var msg = document.getElementById('stylermsg');
+    if(!txt){
+      msg.textContent = 'The box is empty. Paste your reading into it first, then press this again.';
+      ta.focus(); ta.scrollIntoView({block:'center', behavior:'smooth'});
+      return;
+    }
+    if(txt.length < 200){
+      msg.textContent = 'That looks too short to be the whole reading. Paste the rest underneath it, then press again.';
+      ta.focus();
+      return;
+    }
+    msg.textContent = '';
     var who = document.getElementById('who').value.trim();
     var title = document.getElementById('title').value.trim() || 'The Money Map';
     var cover = '<div class="cover"><img src="hat.jpg" alt="">'+
