@@ -14,10 +14,14 @@ const TABLE_BODIES = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Sat
   "Uranus", "Neptune", "Pluto", "North Node", "Lilith"];
 const PLANETS = TABLE_BODIES.slice(0, 10);
 // columns 12 and 13 hold obliquity and nutation; these follow them
-const EXTRA_BODIES = ["Chiron", "Fortuna", "Tyche", "Abundantia", "Mony", "Midas", "Gold",
-  "Juno", "Eros", "Psyche", "Amor"];
+const EXTRA_BODIES = ["Chiron", "Ceres", "Pallas", "Juno", "Vesta",
+  "Fortuna", "Tyche", "Abundantia", "Mony", "Midas", "Gold", "Eros", "Psyche", "Amor",
+  "Urania", "Astraea", "Sappho", "Talent", "Destinn", "Moira", "Karma", "Adrastea", "Klotho", "Lachesis", "Atropos"];
 const MONEY_ASTEROIDS = ["Fortuna", "Tyche", "Abundantia", "Mony", "Midas", "Gold"];
 const LOVE_ASTEROIDS = ["Juno", "Eros", "Psyche", "Amor"];
+const CHARACTER_BODIES = ["Ceres", "Pallas", "Juno", "Vesta", "Psyche", "Urania", "Astraea", "Sappho", "Fortuna", "Talent"];
+const FATE_ASTEROIDS = ["Destinn", "Moira", "Karma", "Adrastea", "Klotho", "Lachesis", "Atropos"];
+const MOON_PHASES = ["New Moon", "Crescent", "First Quarter", "Gibbous", "Full Moon", "Disseminating", "Last Quarter", "Balsamic"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
   "August", "September", "October", "November", "December"];
 
@@ -30,20 +34,27 @@ const pmod = (a, n) => a - n * Math.floor(a / n);
 // ------------------------------------------------------------ ephemeris
 
 export async function loadEphemeris(arrayBuffer) {
-  const head = new DataView(arrayBuffer, 0, 20);
+  // MME2: magic, float64 jd0, int32 days, int32 columns, int32 name length, JSON column names, zlib rows
+  const head = new DataView(arrayBuffer, 0, 24);
   const jd0 = head.getFloat64(4, true);
   const n = head.getInt32(12, true);
   const cols = head.getInt32(16, true);
-  const stream = new Blob([arrayBuffer.slice(20)]).stream().pipeThrough(new DecompressionStream("deflate"));
+  const nlen = head.getInt32(20, true);
+  const names = JSON.parse(new TextDecoder().decode(new Uint8Array(arrayBuffer, 24, nlen)));
+  const stream = new Blob([arrayBuffer.slice(24 + nlen)]).stream().pipeThrough(new DecompressionStream("deflate"));
   const raw = await new Response(stream).arrayBuffer();
   const view = new DataView(raw);
   const v = new Int32Array(n * cols);
   for (let i = 0; i < v.length; i++) v[i] = view.getInt32(i * 4, true);
-  return new Ephemeris(jd0, n, cols, v);
+  return new Ephemeris(jd0, n, cols, v, names);
 }
 
 class Ephemeris {
-  constructor(jd0, n, cols, v) { Object.assign(this, { jd0, n, cols, v }); }
+  constructor(jd0, n, cols, v, names) {
+    Object.assign(this, { jd0, n, cols, v });
+    this.col = Object.fromEntries(names.map((nm, i) => [nm, i]));
+  }
+  has(body) { return body in this.col; }
   val(day, col) { return this.v[day * this.cols + col] / 100000.0; }
   at(jd, col, angular = true) {
     const d = jd - this.jd0;
@@ -65,16 +76,13 @@ class Ephemeris {
     }
     return angular ? pmod(total, 360) : total;
   }
-  lon(jd, body) {
-    const x = EXTRA_BODIES.indexOf(body);
-    return this.at(jd, x >= 0 ? 14 + x : TABLE_BODIES.indexOf(body));
-  }
+  lon(jd, body) { return this.at(jd, this.col[body]); }
   speed(jd, body) {
     const a = this.lon(jd - 0.02, body), b = this.lon(jd + 0.02, body);
     return (pmod(b - a + 180, 360) - 180) / 0.04;
   }
-  obliquity(jd) { return this.at(jd, 12, false); }
-  nutation(jd) { return this.at(jd, 13, false); }
+  obliquity(jd) { return this.at(jd, this.col.obliquity, false); }
+  nutation(jd) { return this.at(jd, this.col.nutation, false); }
 }
 
 // ------------------------------------------------------------ time and angles
@@ -330,9 +338,10 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, 
   const u = new Date(utcMs);
 
   const pos = {};
-  for (const b of [...TABLE_BODIES, ...EXTRA_BODIES]) pos[b] = E.lon(jd, b);
+  const extras = EXTRA_BODIES.filter((b) => E.has(b));
+  for (const b of [...TABLE_BODIES, ...extras]) pos[b] = E.lon(jd, b);
   const retro = {};
-  for (const b of [...PLANETS.slice(2), ...EXTRA_BODIES]) retro[b] = E.speed(jd, b) < 0;
+  for (const b of [...PLANETS.slice(2), ...extras]) retro[b] = E.speed(jd, b) < 0;
   const eps = E.obliquity(jd);
   const ramc = armc(E, jd, lon);
   const asc = ascendant(ramc, eps, lat), mc = midheaven(ramc, eps), vx = vertex(ramc, eps, lat);
@@ -381,7 +390,7 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, 
   for (const b of TABLE_BODIES) say(`- ${b}: ${fmt(pos[b])}${retro[b] ? " retrograde" : ""}, house ${house(pos[b])}`);
   const sn = pmod(pos["North Node"] + 180, 360);
   say(`- South Node: ${fmt(sn)}, house ${house(sn)}`);
-  say(`- Chiron: ${fmt(pos["Chiron"])}${retro["Chiron"] ? " retrograde" : ""}, house ${house(pos["Chiron"])}`);
+  if ("Chiron" in pos) say(`- Chiron: ${fmt(pos["Chiron"])}${retro["Chiron"] ? " retrograde" : ""}, house ${house(pos["Chiron"])}`);
   if (asteroidSet === "love") {
     const morning = pmod(pos["Sun"] - pos["Venus"], 360) < 180;
     say(`- Venus is ${morning ? "a morning star: it rises before the Sun" : "an evening star: it sets after the Sun"}.`);
@@ -461,6 +470,10 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, 
       "(Fortuna is the asteroid, not the Part of Fortune.)"],
     love: ["## Love asteroids (sign, whole sign house, contacts within a few degrees)", LOVE_ASTEROIDS,
       "(Juno is the terms of a bond, Eros the charge, Psyche the soul bond, Amor plain affection.)"],
+    character: ["## The ten small bodies (sign, whole sign house, contacts within a few degrees)", CHARACTER_BODIES,
+      "(Fortuna is the asteroid, not the Part of Fortune.)"],
+    destiny: ["## Fate asteroids (sign, whole sign house, contacts within a few degrees)", FATE_ASTEROIDS,
+      "(Corroboration only: these never carry a chapter.)"],
   };
   if (ASTEROID_TITLES[asteroidSet]) {
   const [aTitle, aNames, aNote] = ASTEROID_TITLES[asteroidSet];
@@ -468,6 +481,7 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, 
   const targets = {};
   for (const b of [...PLANETS, "North Node"]) targets[b] = pos[b];
   Object.assign(targets, { "Ascendant": asc, "Midheaven": mc, "Vertex": vx, "Part of Fortune": pof });
+  if (asteroidSet === "character" || asteroidSet === "destiny") targets["South Node"] = pmod(pos["North Node"] + 180, 360);
   for (const aName of aNames) {
     const contacts = [];
     for (const [tName, tLon] of Object.entries(targets)) {
@@ -485,6 +499,65 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, 
   }
   say(aNote);
   say("");
+  }
+
+  if (opts.moonPhase) {
+    const elong = pmod(pos["Moon"] - pos["Sun"], 360);
+    say("## Moon phase at birth");
+    say(`- ${MOON_PHASES[Math.floor(elong / 45)]} (the Moon ${Math.round(elong)} degrees ahead of the Sun, ${elong < 180 ? "waxing" : "waning"})`);
+    say("");
+  }
+
+  if (opts.destiny) {
+    const nn = pos["North Node"], snode = pmod(nn + 180, 360);
+    const rulerOf = (deg) => RULER_TRAD[signIdx(deg)];
+    const chain = (startDeg) => {
+      const seen = [];
+      let planet = rulerOf(startDeg);
+      while (planet && !seen.includes(planet)) {
+        seen.push(planet);
+        const own = RULER_TRAD[signIdx(pos[planet])] === planet;
+        if (own) return seen.map((p) => `${p} (${SIGNS[signIdx(pos[p])]}, house ${house(pos[p])})`).join(" -> ") + ", which rules its own sign and settles there";
+        planet = rulerOf(pos[planet]);
+      }
+      return seen.map((p) => `${p} (${SIGNS[signIdx(pos[p])]}, house ${house(pos[p])})`).join(" -> ") +
+        (planet ? `, then back to ${planet}: the chain loops` : "");
+    };
+    const modern = (deg) => RULER_MODERN[signIdx(deg)];
+    say("## Destiny calculations");
+    say(`- Pluto: ${fmt(pos["Pluto"])}${retro["Pluto"] ? " retrograde" : " direct (not retrograde)"}, house ${house(pos["Pluto"])}`);
+    const pp = pmod(pos["Pluto"] + 180, 360);
+    const inPP = [...PLANETS, "Chiron"].filter((b) => b in pos && house(pos[b]) === house(pp));
+    say(`- Pluto's polarity point: ${SIGNS[signIdx(pp)]}, house ${house(pp)}; planets in that house: ${inPP.length ? inPP.join(", ") : "none"}`);
+    say(`- North Node: ${fmt(nn)}, house ${house(nn)}. Ruler chain: ${chain(nn)}` +
+      (modern(nn) ? `. Modern ruler ${modern(nn)} in ${SIGNS[signIdx(pos[modern(nn)])]}, house ${house(pos[modern(nn)])}` : ""));
+    say(`- South Node: ${fmt(snode)}, house ${house(snode)}. Ruler chain: ${chain(snode)}` +
+      (modern(snode) ? `. Modern ruler ${modern(snode)} in ${SIGNS[signIdx(pos[modern(snode)])]}, house ${house(pos[modern(snode)])}` : ""));
+    const onAxis = [];
+    const axisBodies = { ...Object.fromEntries([...PLANETS, "Chiron", "Lilith"].filter((b) => b in pos).map((b) => [b, pos[b]])),
+      "Ascendant": asc, "Midheaven": mc, "Vertex": vx };
+    for (const [b, lon] of Object.entries(axisBodies)) {
+      for (const [nodeName, nodeLon] of [["North Node", nn], ["South Node", snode]]) {
+        const d = Math.abs(pmod(lon - nodeLon + 180, 360) - 180);
+        if (d <= 6) onAxis.push(`${b} conjunct the ${nodeName} (${tightness(d)}, ${fix1(d)})`);
+      }
+    }
+    say(`- On the nodal axis: ${onAxis.length ? onAxis.join("; ") : "nothing within six degrees of either node"}`);
+    const skipped = [];
+    for (const b of [...PLANETS, "Chiron"].filter((x) => x in pos)) {
+      const d = Math.abs(pmod(pos[b] - nn + 180, 360) - 180);
+      const off = Math.abs(d - 90);
+      if (off <= 12) {
+        const backN = pmod(pos[b] - nn, 360), backS = pmod(pos[b] - snode, 360);
+        const node = backN < backS ? "North Node" : "South Node";
+        skipped.push([off, `${b} in ${SIGNS[signIdx(pos[b])]}, house ${house(pos[b])}, square the axis ` +
+          `(${off <= 8 ? "strong" : "operative"}, ${fix1(off)} from exact); counting backwards from ${b}, the first node met is the ${node}, ` +
+          `so the ${node} resolves it (the ${node} is in house ${house(node === "North Node" ? nn : snode)})`]);
+      }
+    }
+    skipped.sort((a, b) => a[0] - b[0]);
+    say(`- The skipped step (planets square the nodal axis, closest first): ${skipped.length ? skipped.map((x) => x[1]).join("; ") : "none within twelve degrees"}`);
+    say("");
   }
 
   const jdD = designJd(E, jd);
