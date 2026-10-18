@@ -198,6 +198,13 @@
   }
 
   .calc{text-align:left;margin:0 0 22px}
+  .person{border:1px solid var(--rule);border-radius:10px;padding:16px 14px 4px;margin-bottom:16px;background:var(--wash)}
+  .person h3{font-family:'Cormorant Garamond',serif;font-weight:500;font-size:22px;margin:0 0 12px;color:var(--accent)}
+  .unsure{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--soft);margin:-4px 0 12px;
+    text-transform:none;letter-spacing:0;font-weight:400;font-family:"Inter",sans-serif}
+  .unsure input{width:auto}
+  select{width:100%;background:#fff;color:var(--ink);border:1px solid var(--rule);border-radius:6px;padding:11px 13px;
+    font-family:'EB Garamond',Georgia,serif;font-size:15.5px}
   .places{display:none;border:1px solid var(--rule);border-radius:6px;margin-top:6px;background:#fff;overflow:hidden}
   .places.on{display:block}
   .places button{all:unset;display:block;width:100%;box-sizing:border-box;padding:10px 13px;cursor:pointer;
@@ -227,11 +234,11 @@
   <div class="toprule"></div>
   <p class="sub">Your birth details in, your whole reading out</p>
 
-  <ol class="steps"><li><span>1</span><div>Fill in your <b>birth details</b> below and press <b>Calculate my chart</b>.</div></li><li><span>2</span><div>Tap <b>Open in ChatGPT</b>, or copy the prompt and paste it into <b>Claude</b> or <b>Gemini</b>.</div></li><li><span>3</span><div>When it asks <b>Shall I continue?</b>, answer <b>yes</b>. Three passes and it is done.</div></li></ol>
+  <ol class="steps"><li><span>1</span><div>Fill in your <b>birth details</b> below and press <b>Calculate my chart</b>.</div></li><li><span>2</span><div>Tap <b>Open in ChatGPT</b>, or copy everything and paste it into <b>Claude</b> or <b>Gemini</b>.</div></li><li><span>3</span><div>When it asks <b>Shall I continue?</b>, answer <b>yes</b>. Three passes and it is done.</div></li></ol>
 
   <section class="calc" id="calc">
     <div class="field"><label for="cName">Your first name</label>
-      <input id="cName" autocomplete="given-name"></div>
+      <input id="cName" autocomplete="off"></div>
     <div class="row">
       <div><label for="cDate">Date of birth</label><input id="cDate" type="date" min="1919-04-01" max="2040-12-31"></div>
       <div><label for="cTime">Time of birth</label><input id="cTime" type="time"></div>
@@ -244,12 +251,13 @@
     <p class="calcmsg" id="calcMsg" aria-live="polite"></p>
     <div class="glance" id="glance"></div>
     <details class="raw" id="raw"><summary>See the calculated chart</summary><pre id="rawText"></pre></details>
+
   </section>
 
   <div id="after">
   <button id="gptBtn" type="button">Open in ChatGPT &nbsp;&#8599;</button>
   <div class="gap"></div>
-  <button id="copyBtn" class="line" type="button"><span id="copyLabel">Copy the prompt only</span></button>
+  <button id="copyBtn" class="line" type="button"><span id="copyLabel">Copy everything</span></button>
   <div class="gap"></div>
   <button id="claudeBtn" class="line" type="button">Open in Claude &nbsp;&#8599;</button>
   <div class="gap"></div>
@@ -278,7 +286,7 @@
     </div>
     <button id="go" type="button">Make it beautiful</button>
     <p class="stylermsg" id="stylermsg" aria-live="polite"></p>
-    <p class="privacy">Your birth details never leave your device: the chart is calculated in this page. Only the city name you type is sent to a free map service, to find its coordinates and time zone.<br>Nothing you paste leaves your device. This page has no server: the
+    <p class="privacy">Birth details never leave your device: the charts are calculated in this page. Only the city names you type are sent to a free map service, to find their coordinates and time zone.<br>Nothing you paste leaves your device. This page has no server: the
     styling happens in your own browser, and closing the tab forgets all of it.<br>
     When you print, switch on <b>Background graphics</b> so the colour comes out.</p>
   </section>
@@ -322,7 +330,7 @@
     copyPrompt().then(function(){
       b.classList.add('done'); l.textContent='Copied';
       say('Now open a new chat in ChatGPT, Claude or Gemini and paste.');
-      setTimeout(function(){ b.classList.remove('done'); l.textContent='Copy the prompt only'; }, 2200);
+      setTimeout(function(){ b.classList.remove('done'); l.textContent='Copy everything'; }, 2200);
     });
   });
 
@@ -546,11 +554,12 @@
 </script>
 
 <script type="module">
-import { loadEphemeris, computeChart } from "./chart.js";
-var place = null, chartText = "", ephem = null, timer = null;
+import { loadEphemeris, computeChart, computeCouple } from "./chart.js";
+var places = {}, ephem = null, timers = {};
 var $ = function(id){ return document.getElementById(id); };
 function msg(t){ $('calcMsg').textContent = t; }
 function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+var WARN = 'sits right on a border: a birth time just two or three minutes off would change the rising sign. If the time is a family memory rather than a certificate, check it before you start.';
 
 async function getEphemeris(){
   if (!ephem) {
@@ -594,63 +603,80 @@ function label(p){ return [p.name, p.admin1, p.country].filter(Boolean).join(', 
 
 // Any change to the details clears the old result, so a stale chart can never be copied.
 function clearResult(){
-  chartText = ''; window.__moneyMapChart = '';
+  window.__moneyMapChart = '';
   ['glance', 'raw', 'after'].forEach(function(id){ $(id).classList.remove('on'); });
   msg('');
 }
-['cName', 'cDate', 'cTime', 'cCity'].forEach(function(id){ $(id).addEventListener('input', clearResult); });
-
-$('cCity').addEventListener('input', function(){
-  place = null;
-  var q = this.value.trim();
-  clearTimeout(timer);
-  if (q.length < 2) { $('cPlaces').classList.remove('on'); return; }
-  timer = setTimeout(async function(){
-    try {
-      var list = await searchCity(q);
-      var box = $('cPlaces');
-      box.innerHTML = list.length ? '' : '<button type="button" disabled>No match yet. Check the spelling, or try a larger town nearby.</button>';
-      list.forEach(function(p){
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.innerHTML = esc(p.name) + ' <small>' + esc([p.admin1, p.country].filter(Boolean).join(', ')) + '</small>';
-        b.addEventListener('click', function(){
-          place = p; $('cCity').value = label(p); box.classList.remove('on');
-        });
-        box.appendChild(b);
-      });
-      box.classList.add('on');
-    } catch(e) { msg('The city search is not answering. Check your connection and try again.'); }
-  }, 350);
+document.querySelectorAll('#calc input, #calc select').forEach(function(el){
+  el.addEventListener('input', clearResult); el.addEventListener('change', clearResult);
 });
+
+function attachCity(prefix){
+  $(prefix + 'City').addEventListener('input', function(){
+    places[prefix] = null;
+    var q = this.value.trim();
+    clearTimeout(timers[prefix]);
+    var box = $(prefix + 'Places');
+    if (q.length < 2) { box.classList.remove('on'); return; }
+    timers[prefix] = setTimeout(async function(){
+      try {
+        var list = await searchCity(q);
+        box.innerHTML = list.length ? '' : '<button type="button" disabled>No match yet. Check the spelling, or try a larger town nearby.</button>';
+        list.forEach(function(p){
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.innerHTML = esc(p.name) + ' <small>' + esc([p.admin1, p.country].filter(Boolean).join(', ')) + '</small>';
+          b.addEventListener('click', function(){
+            places[prefix] = p; $(prefix + 'City').value = label(p); box.classList.remove('on');
+          });
+          box.appendChild(b);
+        });
+        box.classList.add('on');
+      } catch(e) { msg('The city search is not answering. Check your connection and try again.'); }
+    }, 350);
+  });
+}
+
+// Reads one person's fields; says what is missing and returns null if anything is.
+function readPerson(prefix, whose){
+  var name = $(prefix + 'Name').value.trim(), date = $(prefix + 'Date').value, time = $(prefix + 'Time').value;
+  var p = places[prefix];
+  if (!name) { msg('Add ' + whose + ' first name.'); $(prefix + 'Name').focus(); return null; }
+  if (!date) { msg('Add ' + whose + ' date of birth.'); $(prefix + 'Date').focus(); return null; }
+  if (!time) { msg('Add ' + whose + ' time of birth. If it is unknown, use 12:00.'); $(prefix + 'Time').focus(); return null; }
+  if (!p) { msg('Pick ' + whose + ' city of birth from the list under the box.'); $(prefix + 'City').focus(); return null; }
+  if (date < '1919-04-01' || date > '2040-12-31') { msg('This calculator covers births from 1919 to 2040.'); return null; }
+  return { name: name, date: date, time: time, place: label(p), lat: p.latitude, lon: p.longitude, tz: p.timezone };
+}
+
+function show(text, glanceHtml, okMsg, who){
+  window.__moneyMapChart = text;
+  $('glance').innerHTML = glanceHtml;
+  $('glance').classList.add('on');
+  $('rawText').textContent = text;
+  $('raw').classList.add('on');
+  $('after').classList.add('on');
+  try { if (who) $('who').value = who; } catch(e) {}
+  msg(okMsg);
+  $('after').scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+attachCity('c');
 
 $('calcBtn').addEventListener('click', async function(){
-  var name = $('cName').value.trim(), date = $('cDate').value, time = $('cTime').value;
-  if (!name) { msg('Add your first name.'); $('cName').focus(); return; }
-  if (!date) { msg('Add your date of birth.'); $('cDate').focus(); return; }
-  if (!time) { msg('Add your time of birth. The reading needs it: it decides your rising sign and every house.'); $('cTime').focus(); return; }
-  if (!place) { msg('Pick your city of birth from the list under the box.'); $('cCity').focus(); return; }
-  if (date < '1919-04-01' || date > '2040-12-31') { msg('This calculator covers births from 1919 to 2040.'); return; }
+  var p = readPerson('c', 'your');
+  if (!p) return;
   msg('Calculating...');
   try {
-    var E = await getEphemeris();
-    var res = computeChart(E, { name: name, date: date, time: time, place: label(place),
-      lat: place.latitude, lon: place.longitude, tz: place.timezone });
-    chartText = res.text;
-    window.__moneyMapChart = chartText;
+    var res = computeChart(await getEphemeris(), p);
     var s = res.summary;
-    $('glance').innerHTML = esc(s.rising) + ' rising &middot; Sun in ' + esc(s.sun) + ' &middot; Moon in ' + esc(s.moon) +
+    show(res.text,
+      esc(s.rising) + ' rising &middot; Sun in ' + esc(s.sun) + ' &middot; Moon in ' + esc(s.moon) +
       '<br>' + esc(s.type) + ' &middot; profile ' + esc(s.profile) + ' &middot; ' + esc(s.authority) + ' authority' +
-      (s.warning ? '<span class="warn">Your rising sign sits right on a border: a birth time just two or three minutes off would change it. If your time is a family memory rather than a certificate, check it before you start.</span>' : '');
-    $('glance').classList.add('on');
-    $('rawText').textContent = chartText;
-    $('raw').classList.add('on');
-    $('after').classList.add('on');
-    try { $('who').value = name; } catch(e) {}
-    msg('Your chart is ready. The prompt below now carries it.');
-    $('after').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      (s.warning ? '<span class="warn">Your rising sign ' + WARN + '</span>' : ''),
+      'Your chart is ready. Tap a button below to open your AI.', p.name);
   } catch(e) { msg(e.message || 'Something went wrong. Refresh the page and try again.'); }
 });
+
 </script>
 </body>
 </html>

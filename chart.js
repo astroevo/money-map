@@ -14,8 +14,10 @@ const TABLE_BODIES = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Sat
   "Uranus", "Neptune", "Pluto", "North Node", "Lilith"];
 const PLANETS = TABLE_BODIES.slice(0, 10);
 // columns 12 and 13 hold obliquity and nutation; these follow them
-const EXTRA_BODIES = ["Chiron", "Fortuna", "Tyche", "Abundantia", "Mony", "Midas", "Gold"];
-const MONEY_ASTEROIDS = EXTRA_BODIES.slice(1);
+const EXTRA_BODIES = ["Chiron", "Fortuna", "Tyche", "Abundantia", "Mony", "Midas", "Gold",
+  "Juno", "Eros", "Psyche", "Amor"];
+const MONEY_ASTEROIDS = ["Fortuna", "Tyche", "Abundantia", "Mony", "Midas", "Gold"];
+const LOVE_ASTEROIDS = ["Juno", "Eros", "Psyche", "Amor"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
   "August", "September", "October", "November", "December"];
 
@@ -315,7 +317,11 @@ function offsetLabel(ms) {
 
 // ------------------------------------------------------------ the report
 
-export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) {
+// opts.asteroids: "money" (default), "love" or "none". opts.compact leaves out the rulers,
+// the element balance and the natal aspects (used inside a couple reading).
+export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, opts = {}) {
+  const asteroidSet = opts.asteroids || "money";
+  const compact = !!opts.compact;
   const [y, mo, d] = date.split("-").map(Number);
   const [h, mi] = time.split(":").map(Number);
   const utcMs = localToUtcMs(y, mo, d, h, mi, tz);
@@ -338,7 +344,7 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) 
   const P = [];
   const say = (s) => P.push(s);
   const two = (n) => String(n).padStart(2, "0");
-  say(`# CHART DATA: ${name}`);
+  say(compact ? `# ${name.toUpperCase()}'S CHART` : `# CHART DATA: ${name}`);
   say("");
   say(`Born ${two(d)} ${MONTHS[mo - 1]} ${y}, ${two(h)}:${two(mi)} local time (${offsetLabel(offMs)}), ` +
     `${place || `${lat}, ${lon}`}. Universal Time ${u.getUTCFullYear()}-${two(u.getUTCMonth() + 1)}-${two(u.getUTCDate())} ${two(u.getUTCHours())}:${two(u.getUTCMinutes())}.`);
@@ -367,7 +373,7 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) 
   } else if (shift) {
     say(`- BIRTH TIME WARNING: the Ascendant is ${pyRound(toEdge * 60).toFixed(0)} arc-minutes from a sign boundary. ` +
       `A birth time ${shift[0]} minute(s) ${shift[1]} changes the rising sign and moves every house. ` +
-      `Say this plainly in Chapter 1.`);
+      `Say this plainly ${opts.warningWhere || "in Chapter 1"}.`);
   }
   say("");
 
@@ -376,9 +382,14 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) 
   const sn = pmod(pos["North Node"] + 180, 360);
   say(`- South Node: ${fmt(sn)}, house ${house(sn)}`);
   say(`- Chiron: ${fmt(pos["Chiron"])}${retro["Chiron"] ? " retrograde" : ""}, house ${house(pos["Chiron"])}`);
+  if (asteroidSet === "love") {
+    const morning = pmod(pos["Sun"] - pos["Venus"], 360) < 180;
+    say(`- Venus is ${morning ? "a morning star: it rises before the Sun" : "an evening star: it sets after the Sun"}.`);
+  }
   say("(North Node is the true node. Lilith is the mean Black Moon.)");
   say("");
 
+  if (!compact) {
   say("## Houses, residents and rulers");
   const residents = {}, landing = {};
   for (let hh = 1; hh <= 12; hh++) residents[hh] = [...PLANETS, "North Node"].filter((b) => house(pos[b]) === hh);
@@ -443,12 +454,21 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) 
     else say(`- ${b} (0): no major aspects`);
   }
   say("");
+  }
 
-  say("## Money asteroids (sign, whole sign house, contacts within a few degrees)");
+  const ASTEROID_TITLES = {
+    money: ["## Money asteroids (sign, whole sign house, contacts within a few degrees)", MONEY_ASTEROIDS,
+      "(Fortuna is the asteroid, not the Part of Fortune.)"],
+    love: ["## Love asteroids (sign, whole sign house, contacts within a few degrees)", LOVE_ASTEROIDS,
+      "(Juno is the terms of a bond, Eros the charge, Psyche the soul bond, Amor plain affection.)"],
+  };
+  if (ASTEROID_TITLES[asteroidSet]) {
+  const [aTitle, aNames, aNote] = ASTEROID_TITLES[asteroidSet];
+  say(aTitle);
   const targets = {};
   for (const b of [...PLANETS, "North Node"]) targets[b] = pos[b];
   Object.assign(targets, { "Ascendant": asc, "Midheaven": mc, "Vertex": vx, "Part of Fortune": pof });
-  for (const aName of MONEY_ASTEROIDS) {
+  for (const aName of aNames) {
     const contacts = [];
     for (const [tName, tLon] of Object.entries(targets)) {
       const sep = Math.abs(pmod(pos[aName] - tLon + 180, 360) - 180);
@@ -463,8 +483,9 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) 
     say(`- ${aName}: ${fmt(pos[aName])}${retro[aName] ? " retrograde" : ""}, house ${house(pos[aName])}. ` +
       (contacts.length ? "Contacts: " + contacts.map((c) => c[1]).join("; ") : "No close contacts."));
   }
-  say("(Fortuna is the asteroid, not the Part of Fortune.)");
+  say(aNote);
   say("");
+  }
 
   const jdD = designJd(E, jd);
   const pers = hdPositions(E, jd), des = hdPositions(E, jdD);
@@ -504,10 +525,226 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }) 
 
   return {
     text: P.join("\n"),
+    data: { name, pos, retro, asc, mc, vx, pof, house, ascSign, hd, pers, des },
     summary: {
       rising: SIGNS[ascSign], sun: SIGNS[signIdx(pos["Sun"])], moon: SIGNS[signIdx(pos["Moon"])],
       type: hd.type, profile: hd.profile, authority: hd.authority, lifesWork: gl(pers["Sun"]),
       warning: !!(shift && shift[0] <= 5),
     },
+  };
+}
+
+// ------------------------------------------------------------ the couple
+
+const SYN_POINTS = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
+  "North Node", "South Node", "Chiron", "Lilith", "Juno", "Eros", "Psyche",
+  "Ascendant", "Descendant", "Midheaven", "IC", "Vertex"];
+const OUTER = new Set(["Uranus", "Neptune", "Pluto"]);
+const POINTS_SMALL = new Set(["North Node", "South Node", "Chiron", "Lilith", "Ascendant", "Descendant",
+  "Midheaven", "IC", "Vertex"]);
+const LOVE_SMALL = new Set(["Juno", "Eros", "Psyche"]);
+const AXIS_FAR = new Set(["South Node", "Descendant", "IC"]);
+const AXIS_NEAR = new Set(["North Node", "Ascendant", "Midheaven"]);
+
+function synPoints(d) {
+  const p = {};
+  for (const b of ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
+    "North Node", "Chiron", "Lilith", "Juno", "Eros", "Psyche"]) p[b] = d.pos[b];
+  p["South Node"] = pmod(d.pos["North Node"] + 180, 360);
+  p["Ascendant"] = d.asc;
+  p["Descendant"] = pmod(d.asc + 180, 360);
+  p["Midheaven"] = d.mc;
+  p["IC"] = pmod(d.mc + 180, 360);
+  p["Vertex"] = d.vx;
+  return p;
+}
+
+function synastryContacts(pa, pb) {
+  const out = [];
+  for (const a of SYN_POINTS) {
+    for (const b of SYN_POINTS) {
+      if (OUTER.has(a) && OUTER.has(b)) continue;                       // generational, shared by everyone their age
+      if (LOVE_SMALL.has(a) && LOVE_SMALL.has(b)) continue;            // asteroid to asteroid says little
+      if ((LOVE_SMALL.has(a) && OUTER.has(b)) || (LOVE_SMALL.has(b) && OUTER.has(a))) continue;
+      const sep = Math.abs(pmod(pa[a] - pb[b] + 180, 360) - 180);
+      for (const [asp, ang, orb] of ASPECTS) {
+        // each axis is listed once: a planet on the South Node, Descendant or IC shows as a conjunction
+        // there, everything else as an aspect to the North Node, Ascendant or Midheaven
+        if ((AXIS_FAR.has(a) || AXIS_FAR.has(b)) && ang !== 0) continue;
+        if ((AXIS_NEAR.has(a) || AXIS_NEAR.has(b)) && ang === 180) continue;
+        let o = orb;
+        if ([a, b].includes("Sun") || [a, b].includes("Moon")) o += 1;
+        if (POINTS_SMALL.has(a) || POINTS_SMALL.has(b)) {
+          if (ang === 150) continue;
+          o = Math.min(o, (ang === 0 || ang === 180) ? 5 : 3);
+        }
+        if (LOVE_SMALL.has(a) || LOVE_SMALL.has(b)) {
+          if (ang === 150) continue;
+          o = Math.min(o, (ang === 0 || ang === 180) ? 3 : 2);
+        }
+        const d = Math.abs(sep - ang);
+        if (d <= o) out.push([a, asp, b, d]);
+      }
+    }
+  }
+  return out;
+}
+
+function midpoint(a, b) {
+  const d = pmod(b - a + 540, 360) - 180;
+  return pmod(a + d / 2, 360);
+}
+
+const GATE_TO_CHANNELS = {};
+for (const [x, y] of CHANNELS) {
+  (GATE_TO_CHANNELS[x] = GATE_TO_CHANNELS[x] || []).push([x, y]);
+  (GATE_TO_CHANNELS[y] = GATE_TO_CHANNELS[y] || []).push([x, y]);
+}
+
+function hdConnection(A, B) {
+  const ga = new Set([...Object.values(A.pers), ...Object.values(A.des)].map((x) => x[0]));
+  const gb = new Set([...Object.values(B.pers), ...Object.values(B.des)].map((x) => x[0]));
+  const res = { em: [], companionship: [], dominanceA: [], dominanceB: [], compromiseA: [], compromiseB: [] };
+  for (const [x, y] of CHANNELS) {
+    const aFull = ga.has(x) && ga.has(y), bFull = gb.has(x) && gb.has(y);
+    const aOne = (ga.has(x) || ga.has(y)) && !aFull, bOne = (gb.has(x) || gb.has(y)) && !bFull;
+    const aNone = !ga.has(x) && !ga.has(y), bNone = !gb.has(x) && !gb.has(y);
+    if (aFull && bFull) res.companionship.push([x, y]);
+    else if (aFull && bNone) res.dominanceA.push([x, y]);
+    else if (bFull && aNone) res.dominanceB.push([x, y]);
+    else if (aFull && bOne) res.compromiseB.push([x, y]);      // B holds one gate and gives way
+    else if (bFull && aOne) res.compromiseA.push([x, y]);
+    else if (aOne && bOne && ((ga.has(x) && gb.has(y)) || (ga.has(y) && gb.has(x)))) res.em.push([x, y]);
+  }
+  const union = new Set([...ga, ...gb]);
+  const joint = CHANNELS.filter(([x, y]) => union.has(x) && union.has(y));
+  const defined = new Set(joint.flatMap(([x, y]) => [GATE_CENTRE[x], GATE_CENTRE[y]]));
+  // Does the couple's joint chart join one person's separate defined areas into one?
+  const jointAdj = {};
+  for (const [x, y] of joint) {
+    const c1 = GATE_CENTRE[x], c2 = GATE_CENTRE[y];
+    (jointAdj[c1] = jointAdj[c1] || new Set()).add(c2);
+    (jointAdj[c2] = jointAdj[c2] || new Set()).add(c1);
+  }
+  const reachJ = (start) => {
+    const seen = new Set([start]), stack = [start];
+    while (stack.length) for (const n of (jointAdj[stack.pop()] || [])) if (!seen.has(n)) { seen.add(n); stack.push(n); }
+    return seen;
+  };
+  const bridges = (P) => {
+    if (P.hd.groups.length < 2) return null;
+    const first = [...P.hd.groups[0]][0];
+    const net = reachJ(first);
+    const joined = P.hd.groups.every((g) => net.has([...g][0]));
+    const own = new Set(P.hd.channels.map(([x, y]) => `${x}-${y}`));
+    const via = joint.filter(([x, y]) => !own.has(`${x}-${y}`) && net.has(GATE_CENTRE[x]) && net.has(GATE_CENTRE[y]));
+    return { joined, via };
+  };
+  return { ...res, defined: CENTRES.filter((c) => defined.has(c)), open: CENTRES.filter((c) => !defined.has(c)),
+    bridgesA: bridges(A), bridgesB: bridges(B) };
+}
+
+const chName = (c) => `${c[0]}-${c[1]} ${CHANNEL_NAMES[`${c[0]}-${c[1]}`]} (${GATE_CENTRE[c[0]]} to ${GATE_CENTRE[c[1]]})`;
+const CHANNEL_NAMES = {
+  "1-8": "Inspiration", "2-14": "The Beat", "3-60": "Mutation", "4-63": "Logic", "5-15": "Rhythm", "6-59": "Mating",
+  "7-31": "The Alpha", "9-52": "Concentration", "10-20": "Awakening", "10-34": "Exploration", "10-57": "Perfected Form",
+  "11-56": "Curiosity", "12-22": "Openness", "13-33": "The Prodigal", "16-48": "The Wavelength", "17-62": "Acceptance",
+  "18-58": "Judgment", "19-49": "Synthesis", "20-34": "Charisma", "20-57": "The Brainwave", "21-45": "Money",
+  "23-43": "Structuring", "24-61": "Awareness", "25-51": "Initiation", "26-44": "Surrender", "27-50": "Preservation",
+  "28-38": "Struggle", "29-46": "Discovery", "30-41": "Recognition", "32-54": "Transformation", "34-57": "Power",
+  "35-36": "Transitoriness", "37-40": "Community", "39-55": "Emoting", "42-53": "Maturation", "47-64": "Abstraction",
+};
+
+// a and b are the same input objects computeChart takes; extra: { relationship, unsure: [names] }
+export function computeCouple(E, a, b, extra = {}) {
+  const ca = computeChart(E, a, { asteroids: "love", compact: true, warningWhere: "near the start of the reading" });
+  const cb = computeChart(E, b, { asteroids: "love", compact: true, warningWhere: "near the start of the reading" });
+  const A = ca.data, B = cb.data;
+  const na = A.name, nb = B.name;
+  const P = [];
+  const say = (s) => P.push(s);
+
+  say(`# COUPLE DATA: ${na} and ${nb}`);
+  say("");
+  if (extra.relationship) say(`What they are to each other: ${extra.relationship}`);
+  const unsure = extra.unsure || [];
+  say(unsure.length
+    ? `Birth time uncertain for: ${unsure.join(" and ")}. Treat that person's Moon, Ascendant, houses and the time-sensitive parts of their Human Design as uncertain.`
+    : "Both birth times are given as known.");
+  say("");
+  say(ca.text.trimEnd());
+  say("");
+  say(cb.text.trimEnd());
+  say("");
+
+  const pa = synPoints(A), pb = synPoints(B);
+  const found = synastryContacts(pa, pb);
+  say(`## Synastry: every contact between ${na}'s chart and ${nb}'s chart`);
+  say("(Contacts between Uranus, Neptune and Pluto on both sides are left out: they are shared by everyone born in those years. Orbs are for your thinking only.)");
+  for (const p of SYN_POINTS) {
+    const mine = found.filter((f) => f[0] === p).sort((x, y) => x[3] - y[3]);
+    if (mine.length) say(`- ${na}'s ${p}: ` + mine.map(([, asp, q, o]) => `${asp} ${nb}'s ${q} (${tightness(o)}, ${fix1(o)})`).join("; "));
+  }
+  say("");
+  say("## The closest contacts, tightest first");
+  [...found].sort((x, y) => x[3] - y[3]).slice(0, 15).forEach(([p, asp, q, o]) =>
+    say(`- ${na}'s ${p} ${asp} ${nb}'s ${q} (${tightness(o)}, ${fix1(o)})`));
+  say("");
+
+  const OVER = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
+    "North Node", "Chiron", "Lilith", "Juno", "Eros", "Psyche"];
+  say("## House overlays (where each person's planets fall in the other's whole sign houses)");
+  say(`- ${na}'s planets in ${nb}'s houses: ` + OVER.map((x) => `${x} ${B.house(A.pos[x])}`).join(", "));
+  say(`- ${nb}'s planets in ${na}'s houses: ` + OVER.map((x) => `${x} ${A.house(B.pos[x])}`).join(", "));
+  say("");
+
+  const COMP = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
+    "North Node", "Chiron"];
+  const comp = {};
+  for (const x of COMP) comp[x] = midpoint(A.pos[x], B.pos[x]);
+  const cAsc = midpoint(A.asc, B.asc), cMc = midpoint(A.mc, B.mc);
+  const cAscSign = signIdx(cAsc);
+  const ch = (x) => mod(signIdx(x) - cAscSign, 12) + 1;
+  say("## Composite chart (midpoints of the two charts: the relationship as its own chart, Whole Sign houses)");
+  say(`- Ascendant: ${fmt(cAsc)}`);
+  say(`- Midheaven: ${fmt(cMc)} (house ${ch(cMc)})`);
+  for (const x of COMP) say(`- ${x}: ${fmt(comp[x])}, house ${ch(comp[x])}`);
+  const cres = {};
+  for (let hh = 1; hh <= 12; hh++) cres[hh] = PLANETS.filter((x) => ch(comp[x]) === hh);
+  const busy = Object.entries(cres).filter(([, v]) => v.length >= 2).sort((p, q) => q[1].length - p[1].length);
+  say(`- Busiest houses: ${busy.length ? busy.map(([hh, v]) => `house ${hh} (${v.join(", ")})`).join("; ") : "no house holds two or more planets"}.`);
+  const cpts = { ...Object.fromEntries(PLANETS.map((x) => [x, comp[x]])), "North Node": comp["North Node"],
+    "Ascendant": cAsc, "Midheaven": cMc };
+  const cf = aspects(cpts).sort((x, y) => x[3] - y[3]);
+  say("- Composite aspects, tightest first: " + (cf.length
+    ? cf.map(([x, asp, yy, o]) => `${x} ${asp} ${yy} (${tightness(o)}, ${fix1(o)})`).join("; ") : "none"));
+  say("");
+
+  const hc = hdConnection(A, B);
+  const list = (arr) => arr.length ? arr.map(chName).join("; ") : "none";
+  say("## Human Design connection (calculated from both gate lists)");
+  say(`- Electromagnetic (each holds one gate of the channel; the spark and the friction): ${list(hc.em)}`);
+  say(`- Companionship (both hold the full channel; easy friendship): ${list(hc.companionship)}`);
+  say(`- Dominance, ${na} holds the full channel and ${nb} neither gate: ${list(hc.dominanceA)}`);
+  say(`- Dominance, ${nb} holds the full channel and ${na} neither gate: ${list(hc.dominanceB)}`);
+  say(`- Compromise, ${na} holds one gate and gives way to ${nb}'s full channel: ${list(hc.compromiseA)}`);
+  say(`- Compromise, ${nb} holds one gate and gives way to ${na}'s full channel: ${list(hc.compromiseB)}`);
+  say(`- Counts: ${hc.em.length} electromagnetic, ${hc.companionship.length} companionship, ` +
+    `${hc.dominanceA.length + hc.dominanceB.length} dominance, ${hc.compromiseA.length + hc.compromiseB.length} compromise.`);
+  say(`- Connection theme: ${hc.defined.length} & ${hc.open.length} (${hc.defined.length} centres defined together, ` +
+    `${hc.open.length} open${hc.open.length ? ": " + hc.open.join(", ") : ""}).`);
+  const bridgeLine = (P, other, br) => !br
+    ? `- ${P.name}'s definition: ${P.hd.definition.toLowerCase()}, so there is no split for ${other} to bridge.`
+    : br.joined
+      ? `- ${other}'s gates join ${P.name}'s ${P.hd.definition.toLowerCase()} definition into one whole, through: ${list(br.via)}. ${P.name} feels whole and fluent around ${other}.`
+      : `- ${other}'s gates do not fully join ${P.name}'s ${P.hd.definition.toLowerCase()} definition; channels they add around it: ${list(br.via)}.`;
+  say(bridgeLine(A.hd ? { ...A, name: na } : A, nb, hc.bridgesA));
+  say(bridgeLine(B.hd ? { ...B, name: nb } : B, na, hc.bridgesB));
+  say("");
+
+  return {
+    text: P.join("\n"),
+    summary: { a: ca.summary, b: cb.summary, theme: `${hc.defined.length} & ${hc.open.length}`,
+      em: hc.em.length, closest: found.length ? [...found].sort((x, y) => x[3] - y[3])[0] : null },
   };
 }
