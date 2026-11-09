@@ -560,6 +560,85 @@ export function computeChart(E, { name, date, time, place = "", lat, lon, tz }, 
     say("");
   }
 
+  if (asteroidSet === "money" && !compact && !opts.noTiming) {
+    // Money timing: transits from today, read against the birth chart (whole sign houses).
+    const nowMs = opts.nowMs || Date.now();
+    const jdNow = juldayFromMs(nowMs);
+    const lastJd = E.jd0 + E.n - 6;
+    const dstr = (j) => { const t = new Date(msFromJulday(j)); return `${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]} ${t.getUTCFullYear()}`; };
+    const ageAt = (j) => Math.floor((j - jd) / 365.2425);
+    const MONEY_HOUSES = { 2: "worth, own income", 8: "other people's money", 10: "career, reputation", 11: "network, audience", 5: "what you make", 6: "daily work" };
+    const tag = (hn) => MONEY_HOUSES[hn] ? ` (a money house: ${MONEY_HOUSES[hn]})` : "";
+    const ingresses = (body, days) => {
+      const out = []; const end = Math.min(jdNow + days, lastJd);
+      let prev = signIdx(E.lon(jdNow, body));
+      for (let j = jdNow + 1; j <= end; j += 1) {
+        const sg = signIdx(E.lon(j, body));
+        if (sg !== prev) { out.push([j, sg, E.speed(j, body) < 0]); prev = sg; }
+      }
+      return out;
+    };
+    const hits = (body, target, days) => {
+      const out = []; const end = Math.min(jdNow + days, lastJd);
+      let prev = pmod(E.lon(jdNow, body) - target + 180, 360) - 180;
+      for (let j = jdNow + 1; j <= end; j += 1) {
+        const cur = pmod(E.lon(j, body) - target + 180, 360) - 180;
+        if (Math.abs(cur) < 20 && Math.sign(cur) !== Math.sign(prev) && cur !== prev) out.push(j);
+        prev = cur;
+      }
+      return out;
+    };
+    const houseOfSign = (sg) => mod(sg - ascSign, 12) + 1;
+    say(`## Money timing (transits from ${dstr(jdNow)}, whole sign houses)`);
+    for (const body of ["Jupiter", "Saturn"]) {
+      const now = E.lon(jdNow, body);
+      say(`- ${body} today: ${fmt(now)}${E.speed(jdNow, body) < 0 ? " retrograde" : ""}, moving through your house ${house(now)}${tag(house(now))}.`);
+    }
+    for (const body of ["Jupiter", "Saturn"]) {
+      const ing = ingresses(body, 3 * 365.25);
+      say(`- ${body} changes house, next three years: ` + (ing.length
+        ? ing.map(([j, sg, r]) => `${dstr(j)} into ${SIGNS[sg]}, your house ${houseOfSign(sg)}${tag(houseOfSign(sg))}${r ? " (retrograde, stepping back)" : ""}`).join("; ")
+        : "stays in the same house the whole time") + ".");
+    }
+    const r2 = RULER_TRAD[(ascSign + 1) % 12];
+    const jTargets = { "Sun": pos["Sun"], "Venus": pos["Venus"], "Midheaven": mc, "Part of Fortune": pof };
+    if (r2 in jTargets) { jTargets[`${r2}, the ruler of your 2nd house`] = jTargets[r2]; delete jTargets[r2]; }
+    else jTargets[`${r2} (ruler of your 2nd house)`] = pos[r2];
+    jTargets["Jupiter (the Jupiter return)"] = pos["Jupiter"];
+    const jl = [];
+    for (const [nm, t] of Object.entries(jTargets)) for (const j of hits("Jupiter", t, 3 * 365.25)) jl.push([j, nm]);
+    jl.sort((a, b) => a[0] - b[0]);
+    say("- Jupiter exactly on your birth points, next three years: " + (jl.length
+      ? jl.map(([j, nm]) => `${dstr(j)} on your ${nm}`).join("; ") : "none in this window") + ".");
+    const ret = hits("Jupiter", pos["Jupiter"], 12.5 * 365.25);
+    if (ret.length) say(`- Next Jupiter return: ${dstr(ret[0])}, at age ${ageAt(ret[0])}. Previous one around age ${ageAt(ret[0]) - 12}.`);
+    const sret = hits("Saturn", pos["Saturn"], 30 * 365.25);
+    if (sret.length) say(`- Next Saturn return: ${dstr(sret[0])}, at age ${ageAt(sret[0])}.`);
+    const sg2 = (ascSign + 1) % 12;
+    const vWin = []; { let inside = signIdx(E.lon(jdNow, "Venus")) === sg2, start = inside ? jdNow : null;
+      const end = Math.min(jdNow + 365.25, lastJd);
+      for (let j = jdNow + 1; j <= end; j += 1) {
+        const k = signIdx(E.lon(j, "Venus")) === sg2;
+        if (k && !inside) start = j;
+        if (!k && inside) vWin.push([start, j - 1]);
+        inside = k;
+      }
+      if (inside) vWin.push([start, null]); }
+    say(`- Venus through your 2nd house (${SIGNS[sg2]}), next twelve months: ` + (vWin.length
+      ? vWin.map(([a, b]) => `${dstr(a)} to ${b ? dstr(b) : "beyond twelve months"}`).join("; ") : "not in this window") + ".");
+    const vl = [];
+    const vTargets = { "Sun": pos["Sun"], "Midheaven": mc };
+    if (r2 === "Sun") { vTargets["Sun, the ruler of your 2nd house"] = pos["Sun"]; delete vTargets["Sun"]; }
+    else if (r2 !== "Venus") vTargets[`${r2} (ruler of your 2nd house)`] = pos[r2];
+    for (const [nm, t] of Object.entries(vTargets))
+      for (const j of hits("Venus", t, 365.25)) vl.push([j, nm]);
+    vl.sort((a, b) => a[0] - b[0]);
+    say("- Venus exactly on your birth points, next twelve months: " + (vl.length
+      ? vl.map(([j, nm]) => `${dstr(j)} on your ${nm}`).join("; ") : "none in this window") + ".");
+    say(`- Age today: ${ageAt(jdNow)}.`);
+    say("");
+  }
+
   const jdD = designJd(E, jd);
   const pers = hdPositions(E, jd), des = hdPositions(E, jdD);
   const hd = humanDesign(pers, des);
